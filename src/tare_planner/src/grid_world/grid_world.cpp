@@ -155,6 +155,11 @@ GridWorld::GridWorld(int row_num, int col_num, int level_num, double cell_size, 
   return_home_ = false;
 }
 
+/**
+ * Reads parameters from ROS parameter server.
+ * 
+ * @param nh main ROS node's handle.
+ */
 void GridWorld::ReadParameters(ros::NodeHandle& nh)
 {
   kRowNum = misc_utils_ns::getParam<int>(nh, "kGridWorldXNum", 121);
@@ -175,6 +180,13 @@ void GridWorld::ReadParameters(ros::NodeHandle& nh)
   kCellUnknownToExploringThr = misc_utils_ns::getParam<int>(nh, "kCellUnknownToExploringThr", 1);
 }
 
+/**
+ * Generates new neighbor cell positions by iterating through kRowNum, kColNum and kLevelNum. Initializes subspaces_ 
+ * at neighbor cell positions with actual subspace_center_geo_position and subspace_center_position.
+ * 
+ * @param robot_position position of robot to get origin of subspaces and generate neighboring cells to populate 
+ * subspaces_.
+ */
 void GridWorld::UpdateNeighborCells(const geometry_msgs::Point& robot_position)
 {
   if (!initialized_)
@@ -210,17 +222,23 @@ void GridWorld::UpdateNeighborCells(const geometry_msgs::Point& robot_position)
   int M = 1;
   GetNeighborCellIndices(robot_position, Eigen::Vector3i(N, N, M), neighbor_cell_indices_);
 
+  // For neighbor_cell_indices, check if the index exists in the prev_neighbor_cell_indices. If not, increment visit count.
   for (const auto& cell_ind : neighbor_cell_indices_)
   {
     if (std::find(prev_neighbor_cell_indices.begin(), prev_neighbor_cell_indices.end(), cell_ind) ==
         prev_neighbor_cell_indices.end())
     {
-      // subspaces_->GetCell(cell_ind).AddVisitCount();
       subspaces_->GetCell(cell_ind).AddVisitCount();
     }
   }
 }
 
+/**
+ * Updates robot_position_ as well as robot's robot_cell_ind with incoming parameter. If current_robot_cell_ind_ is 
+ * outdated, move it to prev_robot_cell_ind_ and update cur_robot_cell_ind_.
+ * 
+ * @param robot_position current position of robot.
+ */
 void GridWorld::UpdateRobotPosition(const geometry_msgs::Point& robot_position)
 {
   robot_position_ = robot_position;
@@ -232,6 +250,14 @@ void GridWorld::UpdateRobotPosition(const geometry_msgs::Point& robot_position)
   }
 }
 
+/**
+ * Iterates through all subspaces_ and clears the graph node indices of all cells with a status of EXPLORING. Subspaces 
+ * are initialized in UpdateNeighborCells. Iterate through keypose_graph_connected_node_indices, and for each connected 
+ * node within the keypose graph, get corresponding subspace, and add keypose_graph_connected_node_indices to cell if 
+ * status of subspace cell is EXPLORING. 
+ * 
+ * @param keypose_graph keypose graph of planner.
+ */
 void GridWorld::UpdateCellKeyposeGraphNodes(const std::unique_ptr<keypose_graph_ns::KeyposeGraph>& keypose_graph)
 {
   std::vector<int> keypose_graph_connected_node_indices = keypose_graph->GetConnectedGraphNodeIndices();
@@ -257,6 +283,15 @@ void GridWorld::UpdateCellKeyposeGraphNodes(const std::unique_ptr<keypose_graph_
   }
 }
 
+/**
+ * @brief converts cell indices to subspaces. If both cell subspaces have a difference of one, they are considered to 
+ * be neighbors.
+ * 
+ * @param cell_ind1 first cell.
+ * @param cell_ind2 second cell.
+ * @return true if difference between cell subspaces have a difference of one.
+ * @return false if difference between cell subspaces have a difference other than one.
+ */
 bool GridWorld::AreNeighbors(int cell_ind1, int cell_ind2)
 {
   Eigen::Vector3i cell_sub1 = subspaces_->Ind2Sub(cell_ind1);
@@ -272,6 +307,13 @@ bool GridWorld::AreNeighbors(int cell_ind1, int cell_ind2)
   }
 }
 
+/**
+ * Given a position in x,y,z, get cell index.
+ * 
+ * @param qx x position.
+ * @param qy y position.
+ * @param qz z position.
+ */
 int GridWorld::GetCellInd(double qx, double qy, double qz)
 {
   Eigen::Vector3i sub = subspaces_->Pos2Sub(qx, qy, qz);
@@ -298,6 +340,13 @@ Eigen::Vector3i GridWorld::GetCellSub(const Eigen::Vector3d& point)
   return subspaces_->Pos2Sub(point);
 }
 
+/**
+ * @brief For all possible rows, columns and levels within the environment, generate a marker with colors corresponding 
+ * to their status message. An UNSEEN cell is blue, a COVERED cell is yellow, an EXPLORING cell is green, and a NOGO 
+ * cell is red. All other cells are gray.
+ * 
+ * @param marker visualization_msgs::Marker containing all a marker for each row, column and level.
+ */
 void GridWorld::GetMarker(visualization_msgs::Marker& marker)
 {
   marker.points.clear();
@@ -374,6 +423,12 @@ void GridWorld::GetMarker(visualization_msgs::Marker& marker)
   //        }
 }
 
+/**
+ * @brief Iterates through the subspaces_, and for all subspaces that have a roadmap connection point, gets roadmap 
+ * connection point position and pushes point back into vis_cloud for visualization. 
+ * 
+ * @param[out] vis_cloud contains markers to visualize. 
+ */
 void GridWorld::GetVisualizationCloud(pcl::PointCloud<pcl::PointXYZI>::Ptr& vis_cloud)
 {
   vis_cloud->points.clear();
@@ -417,6 +472,14 @@ std::vector<int> GridWorld::GetCellViewPointIndices(int cell_ind)
   return subspaces_->GetCell(cell_ind).GetViewPointIndices();
 }
 
+/**
+ * Generates neighbors based on input neighbor range by perturbing center_cell_sub around the range.
+ * Adds neighbors into neighbor cell indices if the resulting sub is in range of the subspaces.
+ * 
+ * @param[in] center_cell_sub sub of the center cell.
+ * @param[in] neighbor_range range to perturb center cell by. 
+ * @param[out] neighbor_indices neighboring indices that are within range.
+ */
 void GridWorld::GetNeighborCellIndices(const Eigen::Vector3i& center_cell_sub, const Eigen::Vector3i& neighbor_range,
                                        std::vector<int>& neighbor_indices)
 {
@@ -427,6 +490,7 @@ void GridWorld::GetNeighborCellIndices(const Eigen::Vector3i& center_cell_sub, c
   {
     for (int j = -neighbor_range.y(); j <= neighbor_range.y(); j++)
     {
+      // TODO: move row_idx up to save a little computation?
       row_idx = center_cell_sub.x() + i;
       col_idx = center_cell_sub.y() + j;
       for (int k = -neighbor_range.z(); k <= neighbor_range.z(); k++)
@@ -444,6 +508,13 @@ void GridWorld::GetNeighborCellIndices(const Eigen::Vector3i& center_cell_sub, c
     }
   }
 }
+/**
+ * Converts position into cell subscript, then call overloaded function using sub.
+ * 
+ * @param[in] position position of center cell.
+ * @param[in] neighbor_range range to perturb center cell by.
+ * @param[out] neighbor_indices neighboring indices that are within range.
+ */
 void GridWorld::GetNeighborCellIndices(const geometry_msgs::Point& position, const Eigen::Vector3i& neighbor_range,
                                        std::vector<int>& neighbor_indices)
 {
@@ -452,6 +523,12 @@ void GridWorld::GetNeighborCellIndices(const geometry_msgs::Point& position, con
   GetNeighborCellIndices(center_cell_sub, neighbor_range, neighbor_indices);
 }
 
+/**
+ * @brief Iterates through subspaces_ to collect all subspaces with an EXPLORING status, and append them onto 
+ * exploring_cell_indices.
+ * 
+ * @param[out] exploring_cell_indices vector containing all cell indices with an EXPLORING status.
+ */
 void GridWorld::GetExploringCellIndices(std::vector<int>& exploring_cell_indices)
 {
   exploring_cell_indices.clear();
@@ -533,6 +610,19 @@ int GridWorld::GetCellStatusCount(grid_world_ns::CellStatus status)
   return count;
 }
 
+/**
+ * Iterates through subspaces_ and counts number of EXPLORING, UNSEEN (unexplored), and COVERED (explored) subspaces.
+ * 
+ * Iterates through viewpoint candidate_indices_, and add candidate viewpoints to cells that are in range.
+ * 
+ * Iterates through neighbor_cell_indices_ that are not COVERED_BY_OTHERS. Goes through viewpoint_ind of each 
+ * neighbor cell to populate a list of metrics.
+ * 
+ * For each neighbor cell, changes the status of the cell (EXPLORING / COVERED) based on the metrics obtained from the 
+ * neighbor_cell_indices_ iteration.
+ * 
+ * @param viewpoint_manager for accessing certain viewpoint information.
+ */
 void GridWorld::UpdateCellStatus(const std::shared_ptr<viewpoint_manager_ns::ViewPointManager>& viewpoint_manager)
 {
   int exploring_count = 0;
@@ -676,6 +766,7 @@ void GridWorld::UpdateCellStatus(const std::shared_ptr<viewpoint_manager_ns::Vie
       subspaces_->GetCell(cell_ind).SetKeyposeID(cur_keypose_id_);
     }
   }
+  // For all cells in almost covered cell indices, change status to COVERED if they are within neighboring cells. 
   for (const auto& cell_ind : almost_covered_cell_indices_)
   {
     if (std::find(neighbor_cell_indices_.begin(), neighbor_cell_indices_.end(), cell_ind) ==
@@ -689,6 +780,24 @@ void GridWorld::UpdateCellStatus(const std::shared_ptr<viewpoint_manager_ns::Vie
   }
 }
 
+/**
+ * Gets global path robot position from one of three possibilities: node representing robot position, nearest keypose 
+ * node, or closest neighbor.
+ * 
+ * Iterates through all EXPLORING cells within the subspace to find all connection points to the global roadmap. If no 
+ * easy connection, iterates through keypose graph nodes of the cell to find node closest to connection point that is 
+ * reachable.
+ * 
+ * If no nodes are EXPLORING or all are unreachable, sends robot home, but makes it a loop 
+ * (robot pos -> home -> robot pos).
+ * 
+ * Constructs distance matrix and solves TSP. Returns global path.
+ * 
+ * @param[in] viewpoint_manager used for helper functions for viewpoints from the keypose graph.
+ * @param[out] ordered_cell_indices order of cells for global path.
+ * @param[in] keypose_graph keypose graph to solve global TSP on.
+ * @return global path.
+ */
 exploration_path_ns::ExplorationPath GridWorld::SolveGlobalTSP(
     const std::shared_ptr<viewpoint_manager_ns::ViewPointManager>& viewpoint_manager,
     std::vector<int>& ordered_cell_indices, const std::unique_ptr<keypose_graph_ns::KeyposeGraph>& keypose_graph)
@@ -900,6 +1009,7 @@ exploration_path_ns::ExplorationPath GridWorld::SolveGlobalTSP(
     node_index.push_back(node_index[0]);
   }
 
+  // Getting global path without using keypose graph.
   if (!use_keypose_graph_ || keypose_graph == nullptr || keypose_graph->GetNodeNum() == 0)
   {
     for (int i = 0; i < node_index.size(); i++)
@@ -914,6 +1024,7 @@ exploration_path_ns::ExplorationPath GridWorld::SolveGlobalTSP(
       ordered_cell_indices.push_back(exploring_cell_indices[cell_ind]);
     }
   }
+  // using keypose graph.
   else
   {
     geometry_msgs::Point cur_position;
@@ -999,6 +1110,13 @@ void GridWorld::GetCellViewPointPositions(std::vector<Eigen::Vector3d>& viewpoin
   }
 }
 
+/**
+ * Updates each neighbor cell's roadmap connection point with the shortest candidate viewpoint. 
+ * For all neighbor cells, add a simplified shortest path from neighbor cell to cells nearby the neighbor cell.
+ * 
+ * @param viewpoint_manager viewpoint manager for reading viewpoints in each cell.
+ * @param keypose_graph keypose graph to be updated and referenced. 
+ */
 void GridWorld::AddPathsInBetweenCells(const std::shared_ptr<viewpoint_manager_ns::ViewPointManager>& viewpoint_manager,
                                        const std::unique_ptr<keypose_graph_ns::KeyposeGraph>& keypose_graph)
 {
@@ -1006,6 +1124,7 @@ void GridWorld::AddPathsInBetweenCells(const std::shared_ptr<viewpoint_manager_n
   for (int i = 0; i < neighbor_cell_indices_.size(); i++)
   {
     int cell_ind = neighbor_cell_indices_[i];
+    // Clear roadmap connection point if it is in collision or not within the local planning horizon.
     if (subspaces_->GetCell(cell_ind).IsRoadmapConnectionPointSet())
     {
       if (viewpoint_manager->InLocalPlanningHorizon(subspaces_->GetCell(cell_ind).GetRoadmapConnectionPoint()) &&
@@ -1020,6 +1139,7 @@ void GridWorld::AddPathsInBetweenCells(const std::shared_ptr<viewpoint_manager_n
     }
 
     std::vector<int> candidate_viewpoint_indices = subspaces_->GetCell(cell_ind).GetViewPointIndices();
+    // Find candidate viewpoint with smallest distance to current cell, and set it as roadmap connection point.
     if (!candidate_viewpoint_indices.empty())
     {
       double min_dist = DBL_MAX;
@@ -1061,6 +1181,8 @@ void GridWorld::AddPathsInBetweenCells(const std::shared_ptr<viewpoint_manager_n
     // Eigen::Vector3i from_cell_sub = ind2sub(from_cell_ind);
     Eigen::Vector3i from_cell_sub = subspaces_->Ind2Sub(from_cell_ind);
     std::vector<int> nearby_cell_indices;
+    // TODO: This looks like a really inefficient loop for getting certain values...
+    // Populating nearby cell indices by checking if subspaces an index of 1 magnitude away are within range.
     for (int x = -1; x <= 1; x++)
     {
       for (int y = -1; y <= 1; y++)
@@ -1082,6 +1204,8 @@ void GridWorld::AddPathsInBetweenCells(const std::shared_ptr<viewpoint_manager_n
       }
     }
 
+    // Attempts to find a path for each neighbor cell to its own neighbors if there are viewpoints there, 
+    // and they are connected in keypose graph.
     for (int j = 0; j < nearby_cell_indices.size(); j++)
     {
       int to_cell_ind = nearby_cell_indices[j];

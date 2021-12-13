@@ -33,7 +33,12 @@ RollingGrid::RollingGrid(const Eigen::Vector3i& size) : size_(size), which_grid_
     }
   }
 }
-
+/**
+ * Updates the grid values after rolling/shifting. Updates updated_indices_. Flips which_grid_. 
+ * Then updates array_ind_to_ind_ using the updated grid.
+ * 
+ * @param roll_dir Number of grids to shift by, usually -2 to 2 kRolloverStepsize. E.g. [-8,0,0]
+ */
 void RollingGrid::Roll(const Eigen::Vector3i& roll_dir)
 {
   if (roll_dir.x() == 0 && roll_dir.y() == 0 && roll_dir.z() == 0)
@@ -42,7 +47,7 @@ void RollingGrid::Roll(const Eigen::Vector3i& roll_dir)
   }
   if (which_grid_)
   {
-    RollHelper(grid1_, grid0_, roll_dir);
+    RollHelper(grid1_, grid0_, roll_dir); //updates grid0_ 
   }
   else
   {
@@ -53,6 +58,7 @@ void RollingGrid::Roll(const Eigen::Vector3i& roll_dir)
   which_grid_ = !which_grid_;
 
   // Update array_ind to ind mapping
+  // TODO: might be better to calculate cell_num in the constructor since this is done more than once
   int cell_num = size_.x() * size_.y() * size_.z();
   for (int ind = 0; ind < cell_num; ind++)
   {
@@ -63,12 +69,19 @@ void RollingGrid::Roll(const Eigen::Vector3i& roll_dir)
     }
     else
     {
-      array_ind = grid0_->GetCellValue(ind);
+      array_ind = grid0_->GetCellValue(ind); //the updated grid
     }
     array_ind_to_ind_[array_ind] = ind;
   }
 }
-
+/** 
+ * Updates the second grid, referencing the values from the first grid.
+ * TODO: wrap around don't seem to make sense for edge values.
+ * 
+ * @param roll_dir Number of grids to shift by, usually -2 to 2 kRolloverStepsize. E.g. [-8,0,0]
+ * @param grid_in
+ * @param grid_out
+ */
 void RollingGrid::RollHelper(const std::unique_ptr<grid_ns::Grid<int>>& grid_in,
                              const std::unique_ptr<grid_ns::Grid<int>>& grid_out, Eigen::Vector3i roll_dir)
 {
@@ -81,6 +94,8 @@ void RollingGrid::RollHelper(const std::unique_ptr<grid_ns::Grid<int>>& grid_in,
   roll_dir.y() %= size_.y();
   roll_dir.z() %= size_.z();
   Eigen::Vector3i dir;
+  // dir is the number of grids to shift by, always positive. Instead of using negative numbers to represent the other 
+  // direction, they wrap around in GetFromIdx(). TODO: wrap around don't seem to make sense for edge values.
   dir.x() = roll_dir.x() >= 0 ? roll_dir.x() : size_.x() + roll_dir.x();
   dir.y() = roll_dir.y() >= 0 ? roll_dir.y() : size_.y() + roll_dir.y();
   dir.z() = roll_dir.z() >= 0 ? roll_dir.z() : size_.z() + roll_dir.z();
@@ -92,10 +107,15 @@ void RollingGrid::RollHelper(const std::unique_ptr<grid_ns::Grid<int>>& grid_in,
     int from_x = GetFromIdx(sub.x(), dir.x(), size_.x());
     int from_y = GetFromIdx(sub.y(), dir.y(), size_.y());
     int from_z = GetFromIdx(sub.z(), dir.z(), size_.z());
+    //grid_out[ind before shift] = grid_in[ind after shift]
     grid_out->GetCell(ind) = grid_in->GetCellValue(from_x, from_y, from_z);
   }
 }
 
+/**
+ * Fill private vector updated_indices_ which contains indices of cells that were added due to the roll/shift.
+ * @param roll_dir Number of grids to shift by, usually -2 to 2 kRolloverStepsize. E.g. [-8,0,0]
+ */
 void RollingGrid::GetRolledInIndices(const Eigen::Vector3i& roll_dir)
 {
   Eigen::Vector3i start_idx, end_idx;
@@ -120,10 +140,11 @@ void RollingGrid::GetRolledInIndices(const Eigen::Vector3i& roll_dir)
   }
   if (dir.y() > 0)
   {
+    // TODO: Pre-assignment of x_start and x_end seems redundant. 
     int x_start = 0;
     int x_end = size_.x() - 1;
-    if (start_idx.x() == 0)
-    {
+    if (start_idx.x() == 0) // if roll_dir.x() >= 0
+    { // this is the complement of start_idx to end_idx in x. This is done to prevent overlap
       x_start = end_idx.x() + 1;
       x_end = size_.x() - 1;
     }
@@ -137,12 +158,13 @@ void RollingGrid::GetRolledInIndices(const Eigen::Vector3i& roll_dir)
   }
   if (dir.z() > 0)
   {
+    // TODO: Pre-assignment of x_start and x_end seems redundant. 
     int x_start = 0;
     int x_end = size_.x() - 1;
     int y_start = 0;
     int y_end = size_.y() - 1;
     if (start_idx.x() == 0)
-    {
+    { // complement in x, same as the case in y
       x_start = end_idx.x() + 1;
       x_end = size_.x() - 1;
     }
@@ -152,7 +174,7 @@ void RollingGrid::GetRolledInIndices(const Eigen::Vector3i& roll_dir)
       x_end = start_idx.x() - 1;
     }
     if (start_idx.y() == 0)
-    {
+    { // complement of start_idx to end_idx in y
       y_start = end_idx.y() + 1;
       y_end = size_.y() - 1;
     }
@@ -165,6 +187,10 @@ void RollingGrid::GetRolledInIndices(const Eigen::Vector3i& roll_dir)
                Eigen::Vector3i(x_end, y_end, end_idx.z()));
   }
 }
+/**
+ * Fill input vector with indices of cells that were removed due to the roll/shift.
+ * @param roll_dir Number of grids to shift by, usually -2 to 2 kRolloverStepsize. E.g. [-8,0,0]
+ */
 void RollingGrid::GetRolledOutIndices(const Eigen::Vector3i& roll_dir, std::vector<int>& rolled_out_indices)
 {
   Eigen::Vector3i rolled_out_start_idx, rolled_out_end_idx;
@@ -189,6 +215,7 @@ void RollingGrid::GetRolledOutIndices(const Eigen::Vector3i& roll_dir, std::vect
   }
   if (dir.y() > 0)
   {
+    // TODO: Pre-assignment of x_start and x_end seems redundant.
     int x_start = 0;
     int x_end = size_.x() - 1;
     if (rolled_out_start_idx.x() == 0)
@@ -235,6 +262,10 @@ void RollingGrid::GetRolledOutIndices(const Eigen::Vector3i& roll_dir, std::vect
   }
 }
 
+/**
+ * Append all indices from start_idx to end_idx into indices 
+ * @param indices Reference to vector that will be updated
+ */
 void RollingGrid::GetIndices(std::vector<int>& indices, Eigen::Vector3i start_idx, Eigen::Vector3i end_idx) const
 {
   start_idx.x() %= size_.x();
@@ -265,13 +296,19 @@ void RollingGrid::GetIndices(std::vector<int>& indices, Eigen::Vector3i start_id
   }
 }
 
+/**
+ * Copies updated_indices_ (which contains indices of cells that were added due to the roll/shift) into input vector.
+ */
 void RollingGrid::GetUpdatedIndices(std::vector<int>& updated_indices) const
 {
-  updated_indices.clear();
-  updated_indices.resize(updated_indices_.size());
+  updated_indices.clear(); // reduces to size 0
+  updated_indices.resize(updated_indices_.size()); 
   std::copy(updated_indices_.begin(), updated_indices_.end(), updated_indices.begin());
 }
 
+/**
+ * Appends Array indices/Cell values (not indices) into input vector 
+ */
 void RollingGrid::GetUpdatedArrayIndices(std::vector<int>& updated_array_indices) const
 {
   updated_array_indices.clear();

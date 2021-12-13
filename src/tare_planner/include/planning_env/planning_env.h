@@ -90,6 +90,16 @@ public:
   {
     parameters_.kUseFrontier = use_frontier;
   }
+  /**
+   * Updates robot position within the pointcloud manager and occupancy grid. If pointcloud manager rolls, update 
+   * pointcloud manager's neighbor cell occupancy cloud and occupancy status using the new rolled in occupancy cloud. 
+   * If occupancy grid rolls, update rolled out occupancy cloud within planning env and point cloud manager, then 
+   * update occuapncy cloud within planning env with new occupancy cloud data.
+   * 
+   * Update robot position within planning env afterwards.
+   * 
+   * @param robot_position updated robot position.
+   */
   void UpdateRobotPosition(geometry_msgs::Point robot_position)
   {
     bool pointcloud_manager_rolling = pointcloud_manager_->UpdateRobotPosition(robot_position);
@@ -107,11 +117,13 @@ public:
     }
     if (occupancy_grid_rolling)
     {
-      // Store and retrieve occupancy cloud
+      // Retrieve occupancy cloud
       rolled_out_occupancy_cloud_->cloud_ = rolling_occupancy_grid_->GetRolledOutOccupancyCloud();
       // rolled_out_occupancy_cloud_->Publish();
+      // Store occupancy cloud
       pointcloud_manager_->StoreOccupancyCloud(rolled_out_occupancy_cloud_->cloud_);
 
+      // Update occupancy cloud in planning env with updated occupancy cloud in pointcloud manager. 
       pointcloud_manager_->GetOccupancyCloud(pointcloud_manager_occupancy_cloud_->cloud_);
       // pointcloud_manager_occupancy_cloud_->Publish();
     }
@@ -125,6 +137,13 @@ public:
     }
     robot_position_update_ = true;
   }
+  
+  /**
+   * Only valid if frontiers are used. Updates occupancy within the rolling occupancy grid with information from the 
+   * input cloud. Ray traces to set cell status using cloud data. Updates cloud for visualization within planning env.
+   * 
+   * @param cloud input registered cloud.
+   */
   template <class PCLPointType>
   void UpdateRegisteredCloud(typename pcl::PointCloud<PCLPointType>::Ptr& cloud)
   {
@@ -145,6 +164,24 @@ public:
     }
   }
 
+  /**
+   * Updates a number of clouds within the environment: keypose cloud, vertical surface cloud, diff cloud, stacked 
+   * cloud, vertical surface cloud.
+   * 
+   * Copies input keypose cloud into keypose cloud within planning environment. If coverage boundaries are used on
+   * object surfaces, trim the keypose cloud to be within boundary. 
+   *
+   * Gets diff cloud by filtering through stacked cloud and keypose cloud. 
+   * 
+   * Updates keypose cloud at current iterator with current keypose cloud. Adds all keypose cloud to stacked cloud, and 
+   * downsizes the stacked cloud. 
+   * 
+   * Uses top element of keypose cloud stack to update vertical surface cloud stack. Increments keypose cloud iterator 
+   * again. 
+   * 
+   * @tparam PCLPointType pointcloud type used within pointclouds in this scope.
+   * @param keypose_cloud input keypose cloud used for updating all clouds.
+   */
   template <class PCLPointType>
   void UpdateKeyposeCloud(typename pcl::PointCloud<PCLPointType>::Ptr& keypose_cloud)
   {
@@ -155,10 +192,12 @@ public:
     }
     else
     {
+      // Copying incoming keypose cloud into local keypose cloud.
       pcl::copyPointCloud<PCLPointType, PlannerCloudPointType>(*keypose_cloud, *(keypose_cloud_->cloud_));
 
       if (parameters_.kUseCoverageBoundaryOnObjectSurface)
       {
+        // Trimming coverage cloud to be within coverage boundaries.
         GetCoverageCloudWithinBoundary<PlannerCloudPointType>(keypose_cloud_->cloud_);
       }
 
@@ -179,7 +218,7 @@ public:
       pointcloud_manager_->GetPointCloud(*(planner_cloud_->cloud_));
       planner_cloud_->Publish();
 
-      // Get the diff cloud
+      // Appending keypose cloud to stacked cloud (all points to red), and downsizing.
       diff_cloud_->cloud_->clear();
       for (auto& point : keypose_cloud_->cloud_->points)
       {
@@ -194,8 +233,10 @@ public:
       *(stacked_cloud_->cloud_) += *(keypose_cloud_->cloud_);
       stacked_cloud_downsizer_.Downsize(stacked_cloud_->cloud_, parameters_.kSurfaceCloudDwzLeafSize,
                                         parameters_.kSurfaceCloudDwzLeafSize, parameters_.kSurfaceCloudDwzLeafSize);
+      // Iterating through stacked and keypose cloud to get diff cloud.
       for (const auto& point : stacked_cloud_->cloud_->points)
       {
+        // For points where red intensity is less than 40, add to diff cloud.
         if (point.r < 40)  // TODO: computed from the keypose cloud resolution and stacked cloud resolution
         {
           diff_cloud_->cloud_->points.push_back(point);
@@ -205,10 +246,12 @@ public:
       get_surface_timer.Stop(false);
 
       // Stack together
+      // Clears the current keypose cloud from keypose cloud stack, then sets it to current keypose cloud.
       keypose_cloud_stack_[keypose_cloud_count_]->clear();
       *keypose_cloud_stack_[keypose_cloud_count_] = *keypose_cloud_->cloud_;
       keypose_cloud_count_ = (keypose_cloud_count_ + 1) % parameters_.kKeyposeCloudStackNum;
       stacked_cloud_->cloud_->clear();
+      // Adds all keypose clouds on keypose cloud stack to stacked cloud, then downsizes.
       for (int i = 0; i < parameters_.kKeyposeCloudStackNum; i++)
       {
         *(stacked_cloud_->cloud_) += *keypose_cloud_stack_[i];
@@ -216,6 +259,8 @@ public:
       stacked_cloud_downsizer_.Downsize(stacked_cloud_->cloud_, parameters_.kSurfaceCloudDwzLeafSize,
                                         parameters_.kSurfaceCloudDwzLeafSize, parameters_.kSurfaceCloudDwzLeafSize);
 
+      // TODO: why increment then add? Is this a mistake?
+      // Adds vertical surface cloud to vertical surface cloud stack at keypose_cloud_count, incremented by 1.
       vertical_surface_cloud_stack_[keypose_cloud_count_]->clear();
       *vertical_surface_cloud_stack_[keypose_cloud_count_] = *(vertical_surface_cloud_->cloud_);
       keypose_cloud_count_ = (keypose_cloud_count_ + 1) % parameters_.kKeyposeCloudStackNum;
@@ -243,6 +288,11 @@ public:
     coverage_boundary_ = polygon;
   }
 
+  /**
+   * Keeps only points that are within the coverage boundary.
+   * 
+   * @param cloud cloud to be filtered within coverage boundary.
+   */
   template <class PCLPointType>
   void GetCoverageCloudWithinBoundary(typename pcl::PointCloud<PCLPointType>::Ptr& cloud)
   {
@@ -316,11 +366,13 @@ private:
   Eigen::Vector3d prev_robot_position_;
   bool robot_position_update_;
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> keypose_cloud_;
+  // Collision cloud
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> stacked_cloud_;
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> stacked_vertical_surface_cloud_;
   pcl::KdTreeFLANN<PlannerCloudPointType>::Ptr stacked_vertical_surface_cloud_kdtree_;
   pointcloud_utils_ns::PointCloudDownsizer<PlannerCloudPointType> stacked_cloud_downsizer_;
   pointcloud_utils_ns::PointCloudDownsizer<pcl::PointXYZI> collision_cloud_downsizer_;
+  // Point cloud that contains vertical surfaces that are within z range and contain sufficient neighbors.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> vertical_surface_cloud_;
   pointcloud_utils_ns::VerticalSurfaceExtractor vertical_surface_extractor_;
   pointcloud_utils_ns::VerticalSurfaceExtractor vertical_frontier_extractor_;
@@ -331,6 +383,7 @@ private:
 
   geometry_msgs::Polygon coverage_boundary_;
 
+  // Overall point cloud used in planning.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> planner_cloud_;
   std::unique_ptr<pointcloud_manager_ns::PointCloudManager> pointcloud_manager_;
   std::unique_ptr<rolling_occupancy_grid_ns::RollingOccupancyGrid> rolling_occupancy_grid_;
@@ -343,12 +396,18 @@ private:
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> rolled_out_occupancy_cloud_;
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> pointcloud_manager_occupancy_cloud_;
 
+  // Point cloud that has been dilated vertically.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<PlannerCloudPointType>> squeezed_planner_cloud_;
+  // KdTree of dilated point cloud.
   pcl::KdTreeFLANN<PlannerCloudPointType>::Ptr squeezed_planner_cloud_kdtree_;
 
+  // Clouds containing points covered by unvisited viewpoints.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> uncovered_cloud_;
+  // Cloud containing frontier points covered by unvisited viewpoints.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> uncovered_frontier_cloud_;
+  // Cloud containing frontiers filtered from rolling occupancy grid.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> frontier_cloud_;
+  // Cloud containing frontiers that have been assured to have clusters > frontier cluster tolerance.
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> filtered_frontier_cloud_;
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> occupied_cloud_;
   std::unique_ptr<pointcloud_utils_ns::PCLCloud<pcl::PointXYZI>> free_cloud_;
