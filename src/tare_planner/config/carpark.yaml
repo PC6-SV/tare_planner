@@ -2,7 +2,7 @@
 sub_start_exploration_topic_ : /start_exploration
 sub_terrain_map_topic_ : /terrain_map
 sub_terrain_map_ext_topic_ : /terrain_map_ext
-sub_state_estimation_topic_ : /state_estimation_at_scan
+sub_state_estimation_topic_ : /state_estimation
 sub_registered_scan_topic_ : /registered_scan
 sub_coverage_boundary_topic_ : /sensor_coverage_planner/coverage_boundary
 sub_viewpoint_boundary_topic_ : /navigation_boundary
@@ -27,14 +27,15 @@ kRushHomeDist : 5
 kAtHomeDistThreshold : 0.5
 kTerrainCollisionThreshold : 0.5
 kLookAheadDistance : 8
-kUseMomentum : true 
+kUseMomentum : false 
 kDirectionChangeCounterThr : 6
 kDirectionNoChangeCounterThr : 5
+
 
 # PlanningEnv
 kUseFrontier : true
 kFrontierClusterTolerance : 1.0
-kFrontierClusterMinSize : 30
+kFrontierClusterMinSize : 10
 kUseCoverageBoundaryOnFrontier : false 
 kUseCoverageBoundaryOnObjectSurface : false
 
@@ -66,11 +67,11 @@ keypose_graph/kAddEdgeCollisionCheckRadius : 0.4
 keypose_graph/kAddEdgeCollisionCheckPointNumThr : 1
 
 # ViewPointManager
-viewpoint_manager/number_x : 50
-viewpoint_manager/number_y : 50
+viewpoint_manager/number_x : 10
+viewpoint_manager/number_y : 10
 viewpoint_manager/number_z : 1
-viewpoint_manager/resolution_x : 0.6
-viewpoint_manager/resolution_y : 0.6
+viewpoint_manager/resolution_x : 1
+viewpoint_manager/resolution_y : 1
 viewpoint_manager/resolution_z : 0.0
 kConnectivityHeightDiffThr : 0.25
 kGreedyViewPointSampleRange : 3
@@ -83,14 +84,14 @@ kCollisionGridResolutionX : 0.2
 kCollisionGridResolutionY : 0.2
 kCollisionGridResolutionZ : 0.0
 kCollisionPointThr : 1
-kLineOfSightStopAtNearestObstacle : true
+kLineOfSightStopAtNearestObstacle : false
 kViewPointHeightFromTerrain : 0.75
 kViewPointHeightFromTerrainChangeThreshold : 0.6
 kCheckDynamicObstacleCollision : false
 kCollisionFrameCountMax : 3
 
-kSensorRange : 7.5
-kNeighborRange : 1
+kSensorRange : 5
+kNeighborRange : 3.0
 kCoverageOcclusionThr : 0.3
 kCoverageDilationRadius : 0.5
 
@@ -102,7 +103,7 @@ kGridWorldCellHeight : 3.0
 kGridWorldNearbyGridNum : 5
 kMinAddPointNumSmall : 40
 kMinAddPointNumBig : 60
-kMinAddFrontierPointNum : 30
+kMinAddFrontierPointNum : 20
 kCellExploringToCoveredThr : 1
 kCellCoveredToExploringThr: 10
 kCellExploringToAlmostCoveredThr: 10
