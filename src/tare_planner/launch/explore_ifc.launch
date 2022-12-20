@@ -4,7 +4,7 @@
     <arg name="bag_name_prefix" default="tare_indoor"/>
     <arg name="rviz" default="true"/>
     <arg name="use_boundary" default="false"/>
-    <arg name="scenario" default="floorplan_1"/>
+    <arg name="scenario" default="indoor"/>w
 
 
     <include file="$(find tare_planner)/launch/explore.launch">
